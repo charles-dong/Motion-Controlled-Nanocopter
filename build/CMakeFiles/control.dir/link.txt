@@ -1,0 +1,1 @@
+/usr/bin/c++   -g -Wl,-search_paths_first -Wl,-headerpad_max_install_names   CMakeFiles/control.dir/src/control/control.cpp.o  -o ../bin/control  ../lib/libcflie.a /usr/local/lib/libLeap.dylib /usr/local/lib/libusb-1.0.dylib 
