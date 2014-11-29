@@ -33,3 +33,8 @@ place automatically
 • When done drawing the pattern, put your other hand into view of the Leap motion sensor (in addition to the first hand holding the object)
 • At this point, the nanocopter will enter its pattern-flying stage and fly the pattern the user drew in hover mode.
 • When it is finished flying the pattern, it will go back into whatever mode it was in before the user began recording a pattern.
+
+TO BUILD AND RUN
+
+• To build: cd into nanoProj/build and type "cmake ..; make" 
+• To run: cd into nanoProj/bin and type "control"
