@@ -1,0 +1,35 @@
+Motion-Controlled Nanocopter is a quadcopter drone that is controlled in real-time by hand gestures.
+
+EXECUTIVE SUMMARY
+
+The Nanocopter project involved the translation of hand gestures read by a Leap motion sensor into radio signals that manipulated a Crazyflie quadcopter drone in real-time.
+
+The motion sensor receives a steady stream of gestures, or commands, from the user. The seven distinctive gestures we designed were forward, backward, left, right, up, down, and swipe. We also allow the user to draw out a pattern with a “pointable object” such as a pencil, which the copter will record and then fly in hover mode (a flight mode in which the nanocopter maintains the altitude at which it entered
+hover mode).
+
+Depending on the “state” of the copter, the real-time control system sends the appropriate roll, thrust, pitch, and yaw commands to the nanocopter, which correspond to flying right, left, forward, backward, up, and down.
+
+USER INSTRUCTIONS
+
+Basic instructions: forward, backward, left, right, up, and down hand gestures make the nanocopter fly in the appropriate direction. Swipe gestures will cause the nanocopter to enable/disable hover mode, in which it maintains constant altitude.
+
+Advanced instructions: users can use a long, thin object (such as a pencil) to draw a pattern (forward, backward, left, and right). The pattern will be recorded and flown by the copter. Note that the copter will maintain altitude in hover mode, so up/down motions are not recognized.
+
+RECOGNIZED GESTURES
+
+Basic gestures (with straight, flat hand):
+• Forward: tilt hand >45° forward (fingers down, wrist up)
+• Backwards: tilt hand >45° backwards (fingers up, wrist down)
+• Left: tilt hand >45° left (for right hand: thumb down, pinky up)
+• Right: tilt hand >45° right (for right hand: thumb up, pinky down)
+• Up: lift hand up further above Leap motion sensor
+• Down: move hand down toward Leap motion sensor
+
+Advanced gestures:
+• With one hand, use a long, skinny object such as a pencil to draw a pattern.
+The tip of the object will be read by the Leap motion sensor.
+• This is the recording stage, during which the nanocopter will hover in
+place automatically
+• When done drawing the pattern, put your other hand into view of the Leap motion sensor (in addition to the first hand holding the object)
+• At this point, the nanocopter will enter its pattern-flying stage and fly the pattern the user drew in hover mode.
+• When it is finished flying the pattern, it will go back into whatever mode it was in before the user began recording a pattern.

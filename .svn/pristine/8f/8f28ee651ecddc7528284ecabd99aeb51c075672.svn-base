@@ -1,0 +1,427 @@
+/*
+	Author: Jamie Mitchell
+
+	Functions: jamieOnFrame
+*/
+
+
+#include <cflie/CCrazyflie.h>
+#include <stdio.h>
+#include <unistd.h>
+#include "../leap/leap_c.h"
+#include "../leap/leap_pointable.h"
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include "studentHeader.h"
+#include "jamieControl.h"
+
+#define MAX_COUNT 2
+
+#define SWIPE_VELOCITY_THRESHOLD 3000
+#define MINIMUM_VELOCITY_THRESHOLD 40
+#define PITCH_THRESHOLD .45
+#define ROLL_THRESHOLD .45
+
+
+
+/*
+ 
+ *fly_pattern*
+ ------------
+ 
+ Description: Goes through each node on the DLL FrameNode structure and determines the 
+	appropriate copter flight commands based difference in finger position of two nodes.
+ 
+ Input: cflie object
+ 
+ Return: N/A
+ 
+ ** Pseudo Code **
+ 
+ (1) Cycle through all nodes
+ (2) 
+ (3) 
+ 
+ *****
+ 
+ */
+
+void fly_pattern(CCrazyflie* cflie){
+	FrameNode* cur_node = DLL_HEAD;
+	int counter = 1;
+	int totalFrames = frame_count;
+
+	//lock
+    //pthread_mutex_lock(&lockz); 
+	
+	printf("Fly_pattern loop entered\n");
+	if (totalFrames >= MIN_FRAME_COUNT) {
+		while (cur_node->next != NULL){ // Cycle through all nodes
+			current_pitch = 0; // Zero out directionals
+			current_thrust = 0;
+			current_roll = 0;
+
+			frame_count = counter;
+
+			if (counter >= NUMFRAMES_TO_DELETE && counter <= (totalFrames - NUMFRAMES_TO_DELETE)){
+
+				// ROLL
+				if ((cur_node->next->pos_x - cur_node->pos_x) > 0){ // Fly right
+					current_roll = ROLL_CONSTANT;
+				}else if ((cur_node->next->pos_x - cur_node->pos_x) < 0){ // Fly left
+					current_roll = -ROLL_CONSTANT;
+				}
+		 
+				/*
+					// THRUST
+					// INCLUDE AFTER TESTING
+				if ((cur_node->next->pos_y - cur_node->pos_y) > 0){ // Fly up
+					current_thrust = THRUST_CONSTANT;
+				}else if ((cur_node->next->pos_y - cur_node->pos_y) < 0){ // Fly down
+					current_thrust = -THRUST_CONSTANT;
+				}	
+				 */
+				
+				// PITCH
+				if ((cur_node->next->pos_z - cur_node->pos_z) < 0){ // Fly forward
+					current_pitch = PITCH_CONSTANT;
+				}else if ((cur_node->next->pos_z - cur_node->pos_z) > 0){ // Fly backward
+					current_pitch = -PITCH_CONSTANT;
+				}	
+				
+				
+				
+				cflie->m_nThrust = DEFAULTTHRUST + current_thrust; // Set Thrust, Pitch, Roll
+				setPitch(cflie,DEFAULTPITCH + current_pitch);
+				setRoll(cflie,DEFAULTROLL + current_roll);
+				
+				// Wait time.
+				double dTimeNow = currentTime();
+				while ((currentTime() - dTimeNow) < FLY_PATTERN_TIME){
+					//printf("\nFLYING PATTERN: frame %d\n", counter);
+					cycle(cflie);
+				}
+			}
+
+			//get next frame
+			counter++;
+			cur_node = cur_node->next;
+
+		}
+	}
+	else {
+		printf("Not enough frames!\n");
+	}
+
+	printf("\n\nDONE FLYING PATTERN!!!!!\n\n");
+
+	//reset everything
+	current_pitch = 0;
+	current_roll = 0;
+	current_yaw = 0;
+	current_thrust = 0;
+
+	
+	if (current_state == HOVER_STATE || current_state == PREHOVER_STATE){
+		//stay in hover mode
+		flightModeHover = 1;
+		cflie->m_nThrust = HOVERTHRUST;
+		current_state = HOVER_STATE;
+	}
+	else {
+		//exit hover mode
+		flightModeHover = 0;
+		setThrust(cflie, DEFAULTTHRUST + current_thrust*PITCH_MULTIPLIER*(BATTERYCONSTANT - batteryLevel(cflie)));	
+		current_state = NORMAL_STATE;
+	}
+	cycle(cflie);
+
+
+	//unlock
+    //pthread_mutex_unlock(&lockz);
+}
+
+/*
+ 
+ *record_finger_movement*
+ ------------
+ 
+ Description: Creates a FrameNode for the given frame object inside onFrame function. and inserts it
+	into the DLL of FrameNodes.
+	Note: X,Y,Z position is recorded in Millimeters from Leap origin.
+ 
+ Input: integer position x ,y ,and z
+ 
+ Return: Pointer to the FrameNode that it created
+ 
+ ** Pseudo Code **
+ 
+ (1) new frame node
+ (2) add it to the DLL.
+ (3) update current_node
+ 
+ *****
+ 
+ */
+
+FrameNode* record_tool_movement(leap_vector tool_position){
+	int position_x = tool_position.x;
+	int position_y = tool_position.y;
+	int position_z = tool_position.z;
+	
+	FrameNode* new_node = new_frame_node(position_x, position_y, position_z); //create new node
+	
+	if (DLL_HEAD == current_node){ // first node inserted
+		DLL_HEAD->next = new_node;
+		new_node->prev = DLL_HEAD;
+		DLL_HEAD->pos_x = new_node->pos_x;
+		DLL_HEAD->pos_y = new_node->pos_y;
+		DLL_HEAD->pos_z = new_node->pos_z;
+	}else{
+		current_node->next = new_node; // add it to the DLL
+		new_node->prev = current_node;
+	}
+	
+	//printf("Created new FrameNode");
+	//printf("\nTool position_x %d", position_x);
+	//printf("\nTool position_y %d", position_y);
+	//printf("\nTool position_z %d", position_z);
+	
+	
+	frame_count++;
+	current_node = new_node; 
+	return current_node;
+
+}	
+
+
+/*
+ 
+ *new_frame_node*
+ ------------
+ 
+ Description: Creates a new FrameNode object to store position x, y, and z 
+
+ Input: integer position x ,y ,and z
+ 
+ Return: Pointer to the FrameNode
+ 
+ ** Pseudo Code **
+ 
+ (1) new frame node
+ (2) set instance variables
+ 
+ *****
+ 
+ */
+
+FrameNode* new_frame_node(int position_x, int position_y, int position_z){
+	FrameNode* frame_node = new FrameNode;
+	//MALLOC_CHECK(FrameNode);
+	frame_node->pos_x = position_x;
+	frame_node->pos_y = position_y;
+	frame_node->pos_z = position_z;
+	
+	frame_node->next = frame_node->prev = NULL;
+	return frame_node;
+}
+/*
+ 
+ *jamieOnFrame*
+ ------------
+ 
+ Description: Reads data from the Leap frame and hand objects. Determines which gestures are made,
+	updates current_roll/pitch/thrust, and updates the current_signal.
+ 
+ Input: hand object,frame object, current thrust pointer, current pitch pointer, current roll poiner, current_signal
+ 
+ Return: N/A
+ 
+ ** Pseudo Code **
+ 
+ (1) Get values for the palm position, direction, velocity, normal vector, number of fingers, number of hands
+ (2) Determine if values reach threshold for
+	- Pitch: Hand tilted forward/backward more than 45 degrees
+	- Roll: Hand tilted left/right more than 45 degrees
+	- Thrust: Hand raised 2-3ft above leap motion (increase), hand 3 inches or less above leap (decrease)
+	- Fly gesture: Two hands. 5 fingers out on each. Stationary hands.
+	- Land gesture: Two hands. 0 fingers out on each (fist). Stationary hands.
+	- Change hover: Quick swipe motion from right to left. 
+ (3) Update the current_Pitch/Roll/Thrust values and change signal appropriately
+	
+ 
+ *****
+ 
+ */
+
+void jamieOnFrame(leap_hand_ref hand,leap_frame_ref frame, CCrazyflie* cflie){
+	//printf("JAMIEonframe");
+	leap_vector current_position;
+	leap_vector current_direction;
+	leap_vector current_velocity;
+	leap_vector current_normal; // perpendicular line to direction
+
+	// Gets number of fingers on screen
+	int num_fingers = leap_hand_fingers_count(hand); 
+	int num_hands = leap_frame_hands_count(frame);
+	
+	// Gets current position, direction, velocity of hand from Leap
+	leap_hand_palm_position(hand, &current_position);
+	leap_hand_direction(hand, &current_direction);
+	leap_hand_palm_velocity(hand, &current_velocity);
+	leap_hand_palm_normal(hand, &current_normal);
+	
+	// Print out values. Easier to determine thresholds for gestures.
+	//printf("\n");
+	//printf("Position: \n	X: %f \n	Y: %f \n	Z:%f", current_position.x, current_position.y, current_position.z);
+	//printf("\nDirection: \n	X: %f \n	Y: %f \n	Z:%f", current_direction.x, current_direction.y, current_direction.z);
+	//printf("\nVelocity: \n	X: %f \n	Y: %f \n	Z:%f", current_velocity.x, current_velocity.y, current_velocity.z);
+	//printf("\nNormal: \n	X: %f \n	Y: %f \n	Z:%f", current_normal.x, current_normal.y, current_normal.z);
+	//printf("\nNumber of Fingers: %d", num_fingers);
+	
+
+
+	//printf("\ncurrent_signal == %d\n", current_signal);
+
+	//lock
+    //pthread_mutex_lock(&lockz);
+
+
+	// Only send new signal if last signal has been processed
+	if (current_signal == NO_SIG){
+	
+		//Pitch
+			// Palm is stationary. 
+			// looks at Y direction of palm vector (vector from middle of palm to finger)
+		if ((current_velocity.x < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.y < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.z < MINIMUM_VELOCITY_THRESHOLD)){
+			if (current_direction.y < -PITCH_THRESHOLD){ // hand pointed down. increase pitch
+				current_pitch = PITCH_CONSTANT;
+				//printf("\n-------Decreased pitch  ");
+			}else if (current_direction.y > PITCH_THRESHOLD){ // hand pointed up. decrease pitch
+				current_pitch = -PITCH_CONSTANT;
+				//printf("\n-------Increased pitch  ");
+			}
+			else {
+				current_pitch = 0;
+			}
+		}
+	
+		//Roll
+			// Palm is stationary. 
+			// looks at X direction of palm normal vector (prependicular to vector from middle of palm to finger)
+		if ((current_velocity.x < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.y < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.z < MINIMUM_VELOCITY_THRESHOLD)){
+			if (current_normal.x < -ROLL_THRESHOLD){ // hand pointed left. decrease roll
+				current_roll = ROLL_CONSTANT;
+				//printf("\n-------Decreased roll  ");
+			}else if (current_normal.x > ROLL_THRESHOLD){ // hand pointed right. increase roll
+				current_roll = -ROLL_CONSTANT;
+				//printf("\n-------Increased roll  ");
+			}
+			else {
+				current_roll = 0;
+			}
+		}	
+
+		//Thrust
+			// Palm is stationary.
+			// looks at Y position. 2-3ft above leap = increase thrust. a few inches above leap = decrease thrust
+		if ((current_velocity.x < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.y < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.z < MINIMUM_VELOCITY_THRESHOLD)){
+			current_thrust = current_position.y;
+		}
+	
+	
+		//FLY_SIG = Two hands. 5 fingers on each (open palm). Stationary hands
+			// number of hands == 2. and each hand has 5 fingers
+			// hand velocity is less than minimum threshold
+		if (num_hands == 2){
+				leap_hand_ref hand_0 = leap_frame_hand_at_index(frame, 0); // gets hand objects
+				leap_hand_ref hand_1 = leap_frame_hand_at_index(frame, 1);
+			if ((leap_hand_fingers_count(hand_0) == 5) && (leap_hand_fingers_count(hand_1) == 5)){
+				if ((current_velocity.x < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.y < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.z < MINIMUM_VELOCITY_THRESHOLD)){
+					
+					current_signal = FLY_SIG;
+					printf("----------Two hands, 5 fingers each gesture: FLY_SIG\n");
+				}	
+			}	
+		}
+	
+		//LAND_SIG = Two hands. 0 fingers on each (fist). fists stationary.
+			// number of hands == 2. number of fingers == 0
+			// hand velocity less than minimum threshold
+		if (num_hands == 2){
+			leap_hand_ref hand_0 = leap_frame_hand_at_index(frame, 0);
+			leap_hand_ref hand_1 = leap_frame_hand_at_index(frame, 1);
+			if ((leap_hand_fingers_count(hand_0) == 2) && (leap_hand_fingers_count(hand_1) == 2)){
+				if ((current_velocity.x < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.y < MINIMUM_VELOCITY_THRESHOLD) && (current_velocity.z < MINIMUM_VELOCITY_THRESHOLD)){
+					
+					current_signal = LAND_SIG;
+					printf("----------Two hands, two fingers: LAND_SIG\n");
+				}
+			}
+		}
+	
+		// CHANGE_HOVER_SIG = Swipe gesture. From right to left.
+			// X velocitiy less than SWIPE_VELOCITY_THRESHOLD
+			// Recognizes swipes in both directions: CHANGE_HOVER_SIG
+		if ( (num_hands == 2) && (current_velocity.x < -SWIPE_VELOCITY_THRESHOLD || current_velocity.x > SWIPE_VELOCITY_THRESHOLD)){
+			current_signal = CHANGE_HOVER_SIG;
+			printf("----------Swipe gesture: CHANGE_HOVER_SIG\n");
+		} 
+		
+	
+	
+	
+		// POINTABLE OBJECT: FLY_PATTERN
+			// Detects pointable.
+			// Gets x,y,z position
+			// calls record_tool_movement
+		int num_tools = leap_hand_tools_count(hand);
+		
+		if ((FLY_PATTERN == 1) && (num_tools == 0)){ // pointable taken off screen, done drawing pattern
+			printf("\n----FLYING PATTERN----\n");
+			FLY_PATTERN = 2;
+			fly_pattern(cflie);
+			FLY_PATTERN = 0;
+			frame_count = 0;
+			//freeFrameNodes
+			current_node = DLL_HEAD;
+		}else if(num_tools > 0){
+			//printf("\nPointable tool detected");
+
+			//reset everything while recording
+			current_pitch = 0;
+			current_roll = 0;
+			current_yaw = 0;
+			current_thrust = 0;
+
+			//hover mode while recording
+			flightModeHover = 1;
+			cflie->m_nThrust = HOVERTHRUST;
+			cycle(cflie);
+
+			leap_pointable_ref tool1;
+			tool1 = leap_hand_tool_at_index(hand,0);
+			leap_vector tool_position;
+			//int32_t p_id = leap_pointable_id(tool1); //unused
+
+			//printf("\nFRAME COUNT: %d\n",frame_count);
+			leap_pointable_tip_position(tool1, &tool_position);
+			record_tool_movement(tool_position);
+			FLY_PATTERN = 1;
+		}
+
+	}//end of if current_signal == NO_SIG
+	
+	//leap_pointable_ref leap_hand_finger_at_index(leap_hand_ref hand, int index);
+
+	//unlock
+    //pthread_mutex_unlock(&lockz);
+}
+
+
+
+
+

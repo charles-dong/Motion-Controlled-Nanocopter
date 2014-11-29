@@ -1,0 +1,17 @@
+/*
+	Header file for Jamie 
+
+*/
+
+#ifndef _JAMIECONTROL__H_
+#define _JAMIECONTROL__H_
+
+
+
+//description
+//void jamieOnFrame(leap_hand_ref hand);
+void jamieOnFrame(leap_hand_ref hand, leap_frame_ref frame);
+
+
+
+#endif

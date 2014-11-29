@@ -1,0 +1,126 @@
+THREAD DESIGN
+
+	The leap controller thread reads hand gestures from Leap Motion device, and translates gestures into flying states using global variables and signals. We are not big fans of global data between threads. Please make sure they are “safe” as discussed in class. The other thread reads global state, accept signals and transitions between states, then, calls appropriate helper functions to set control parameters.  
+
+	The copter controller thread sends control commands via the Crazyflie and Crazyradio data structure. We will also read log information (e.g., reading different sensors, but in basic demo, just current battery level) back from the device. The thread listens to sensor data from the Crazyflie copter.
+
+
+GESTURES
+
+	forward/backward/left/right - direction
+		- control direction of copter in all modes (pitch and roll)
+
+			negative roll if direction.x < NEG_ROL_THRESHOLD
+			positive roll if direction.x > POS_ROL_THRESHOLD 
+			positive pitch if direction.y > POS_PTH_THRESHOLD
+			negative pitch if direction.y < NEG_PTH_THRESHOLD
+
+	up/down
+		- control altitude of the copter (thrust from hand position)
+		- not recognized in the hover mode
+		- use const1 of 38500 - magic number to start with
+			- variable "factor" depends on battery level
+
+			current_thrust=const1+position.y*factor;
+
+	swipe
+		- go in/out of hover mode where the copter holds its altitude but still responds to direction (not up/down)
+
+
+READING GESTURES
+	
+	-read via code callbacks
+
+	Functions:
+	
+		onframe() - called when hand is detected
+		leap_hand_palm_velocity(hand, &velocity);
+		leap_hand_direction(hand, &direction);
+		leap_hand_palm_position(hand,&position);
+
+	Sample swipe read code:
+
+		if (velocity.x > 500) {
+			//send out the  hover mode signal
+ 		}
+
+FINITE STATES
+
+	"Land" -- RETURN_NORMAL --> "Normal" -- CHANGE_HOVER --> "PreHover" -- TIME_OUT --> "Hover" -- CHANGE_HOVER --> "PreNormal" -- TIME_OUT --> "Normal" -- LAND --> "Land"
+
+	- because sometimes multiple CHANGE_HOVER signals can be generated, we introduce the PreNormal and PreHover states
+		-these states will transit to Normal and Hover after a TIME_OUT signal, which will be generated periodically
+		-this will prevent the two states changing back and forth
+		-currentTime() in the crazyflie.h may help when you generate the timeout signal
+
+GLOBAL VARIABLES
+
+	TRIM_PITCH/TRIM_ROLL - if copter constantly drifts in one direction, balance it out with this
+	
+	DEFAULTTHRUST = 32767;
+	DEFAULTPITCH = TRIM_PITCH;
+	DEFAULTROLL = TRIM_ROLL;
+	current_thrust;
+	current_pitch;
+	current_roll;
+
+	current_state;
+	current_signal;
+	current_position; - struct with position.y and position.x
+
+	CCrazyflie *cflieCopter;
+	CCrazyRadio *crRadio;
+
+HELPER FUNCTIONS
+	
+	GENERAL
+
+		call setSendSetpoints and set the m_bSendsSetpoints to true once, then don't use this function anymore
+
+	In "Normal" state:
+
+		flyNormal {
+			setPitch()
+	    	setRoll()
+	    	setThrust()
+		}
+
+	In "Land" state
+
+		land() - when leap controller loses track of hand, LAND signal will let the copter go into the Land State, so the copter 
+			will not drop suddenly; rather it reduce the thrust gradually
+
+	In "PreHover" and "PreNormal"
+
+		slowDown() - slows down based on MAXTIME until TIME_OUT signal
+
+	In "Hover"
+
+		initializeHover() - currentPitch/Roll/Thrust = 0;
+
+		flyHover() {
+			setPitch();
+			setRoll();
+		}
+
+
+
+MAIN FUNCTIONS
+
+	cycle() - every loop will send the parameters (thrust, roll, pitch) to the copter
+		- Inside case STATE_NORMAL_OPERATION: { } break; You should call the sendSetpoint function here, but with a preset time interval(defined in the m_dSendSetpointPeriod, and make use of the double currentTime(); function) Also you could call the setParam function you write to enable/disable the hover mode here.
+	
+	batteryLevel() - already written - returns float value (assign factor for thrust accordingly)
+	currentAltitude() - refactor batteryLevel function - returns current altitude
+
+	sendParam - enables/disables hover mode - (The sendSetPoint give you an example on how to do it)But the char cBuffer[nSize]; should have the an "unsigned char" type varid (as the id of the flightmode.althold, use idForName to get it) and followed by a "int8_t" variable (1 means enable the hover mode and 0 means disable the hover mode) Then initialize it with Port 2, Channel 2 packets send this packet to the copter
+
+	setThrust(CCrazyflie *copter, int thrust) - sets copter struct's m_nThrust to thrust, provided it's within min/max bounds
+		-next time cycle() is called, sendSetpoint will sen this new thrust to the copter
+
+
+
+
+MISC NOTES
+	
+	payload - pitch/roll/yaw/thrust data that sendSetpoint sends to copter

@@ -1,0 +1,357 @@
+// Copyright (c) 2013, Jan Winkler <winkler@cs.uni-bremen.de>
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+//     * Redistributions of source code must retain the above copyright
+//       notice, this list of conditions and the following disclaimer.
+//     * Redistributions in binary form must reproduce the above copyright
+//       notice, this list of conditions and the following disclaimer in the
+//       documentation and/or other materials provided with the distribution.
+//     * Neither the name of Universität Bremen nor the names of its
+//       contributors may be used to endorse or promote products derived from
+//       this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
+#include <cflie/CCrazyflie.h>
+#include <stdio.h>
+#include <unistd.h>
+#include "../leap/leap_c.h"
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <pthread.h>
+
+#include "studentHeader.h"
+#include "jamieControl.h"
+#include "charlieControl.h"
+
+using namespace std;
+
+
+
+//Global variable: pointer to the crazy flie data structure and mutex lock
+CCrazyflie *cflieCopter=NULL;
+
+//NOTE: The helper functions are declared and implemented in jamieControl and charlieControl
+
+  unsigned short DEFAULTTHRUST = THRUST_DEFAULT_NUMBER;
+  float DEFAULTPITCH = TRIM_PITCH;
+  float DEFAULTROLL = TRIM_ROLL;
+  float DEFAULTYAW = TRIM_YAW;
+    
+  unsigned short current_thrust = 0;
+  float current_pitch = 0;
+  float current_roll = 0;
+  float current_yaw = 0;
+
+  int8_t flightModeHover = 0;
+
+  int current_state = LAND_STATE;
+  int current_signal = FLY_SIG;
+
+  pthread_mutex_t lockz;
+
+  //extension
+  FrameNode* DLL_HEAD = new_frame_node(0,0,0); 
+  FrameNode* current_node = DLL_HEAD;
+  int frame_count = 0;
+  int FLY_PATTERN = 0;
+  int FLY_PATTERN_COUNT = 0;
+  int totalFrames = 0;
+  unsigned short THRUST_YAXIS_EQUALS_ZERO = 150;
+
+
+
+//The leap motion call back functions
+//Leap motion functions
+void on_init(leap_controller_ref controller, void *user_info)
+{
+    printf("init\n");
+}
+
+void on_connect(leap_controller_ref controller, void *user_info)
+{
+    printf("connect\n");
+}
+
+void on_disconnect(leap_controller_ref controller, void *user_info)
+{
+    printf("disconnect\n");
+}
+
+void on_exit(leap_controller_ref controller, void *user_info)
+{
+    printf("exit\n");
+}
+
+/*
+
+*on_frame*
+------------
+
+Description: called when leap detects a hand gesture - sets leap_vectors, current 
+  pitch/roll/thrust and current_signal accordingly
+
+** Pseudo Code **
+
+(1) 
+
+*****
+
+*/ 
+void on_frame(leap_controller_ref controller, void *user_info)
+{
+  //lock
+  //pthread_mutex_lock(&lockz); 
+
+  leap_frame_ref frame = leap_controller_copy_frame(controller, 0);
+       
+    for (int i = 0; i < leap_frame_hands_count(frame); i++) {
+        leap_hand_ref hand = leap_frame_hand_at_index(frame, i);
+
+        jamieOnFrame(hand, frame, cflieCopter);
+        //CS50_TODO 
+        //printf("back in Control.cpp on_frame\n");
+    }
+    leap_frame_release(frame);
+
+    //printf("Exiting on_frame. Sending dummy packet.\n");
+    //cycle(cflieCopter);
+
+  //unlock
+  //pthread_mutex_unlock(&lockz);
+}
+    
+
+
+//This the leap motion control callback function
+//You don't have to modifiy this
+void* leap_thread(void * param){
+  struct leap_controller_callbacks callbacks;
+  callbacks.on_init = on_init;
+  callbacks.on_connect = on_connect;
+  callbacks.on_disconnect = on_disconnect;
+  callbacks.on_exit = on_exit;
+  callbacks.on_frame = on_frame;
+  leap_listener_ref listener = leap_listener_new(&callbacks, NULL);
+  leap_controller_ref controller = leap_controller_new();
+  leap_controller_add_listener(controller, listener);
+  while(1);
+}
+
+//This thread will check the current state and send corrsponding command to the copter
+void* main_control(void * param){
+  CCrazyflie *cflieCopter=(CCrazyflie *)param;
+
+  while(cycle(cflieCopter)) {
+        //transition depend on the current state
+        //CS50_TODO : depend on the current signal and current state, you can call the helper function here to control the copter
+        
+        //lock
+        pthread_mutex_lock(&lockz); 
+        //printf("Main Control\n");
+
+        switch(current_signal){
+          case NO_SIG:
+              if (current_state == NORMAL_STATE || current_state == HOVER_STATE){
+                
+				  if (FLY_PATTERN == 2){ // FLY A FRAME
+					  
+					  if (current_node->next != NULL){ // FLY A FRAME
+						  int counter = 1;
+						  
+						  if (totalFrames >= MIN_FRAME_COUNT) {
+								  current_pitch = 0; // Zero out directionals
+								  current_thrust = 0;
+								  current_roll = 0;
+								  
+								  if (frame_count >= NUMFRAMES_TO_DELETE && frame_count <= (totalFrames - NUMFRAMES_TO_DELETE)){
+									  
+									  // ROLL
+									  if ((current_node->next->pos_x - current_node->pos_x) > 0){ // Fly right
+										  current_roll = ROLL_CONSTANT;
+									  }else if ((current_node->next->pos_x - current_node->pos_x) < 0){ // Fly left
+										  current_roll = -ROLL_CONSTANT;
+									  }
+									
+									  // PITCH
+									  if ((current_node->next->pos_z - current_node->pos_z) < 0){ // Fly forward
+										  current_pitch = PITCH_CONSTANT;
+									  }else if ((current_node->next->pos_z - current_node->pos_z) > 0){ // Fly backward
+										  current_pitch = -PITCH_CONSTANT;
+									  }	
+									  
+							  
+									  cflieCopter->m_nThrust = DEFAULTTHRUST + current_thrust; // Set Thrust, Pitch, Roll
+									  setPitch(cflieCopter,DEFAULTPITCH + current_pitch);
+									  setRoll(cflieCopter,DEFAULTROLL + current_roll);
+									  
+									  // Wait time.
+									  double dTimeNow = currentTime();
+									  while ((currentTime() - dTimeNow) < FLY_PATTERN_TIME){
+										  //printf("\nFLYING PATTERN: frame %d\n", counter);
+										  cycle(cflieCopter);
+									  }
+								  } // not beyond numframes to delete
+								  
+								  //get next frame
+								  frame_count++;
+								  current_node = current_node->next;
+					
+						  }
+						  else {
+							  printf("Not enough frames!\n");
+							  FLY_PATTERN = 0;
+							  FLY_PATTERN_COUNT = 0;
+							  frame_count = 0;		
+							  totalFrames = 0;
+							  freeFrameNodes(DLL_HEAD->next);
+							  DLL_HEAD->next = NULL;		
+							  current_node = DLL_HEAD;
+						  }
+						  
+					  }else{ // current_node->next == NULL. done
+						  printf("\n\n------DONE FLYING PATTERN------\n\n");
+						  FLY_PATTERN = 0;
+						  FLY_PATTERN_COUNT = 0;
+						  frame_count = 0;
+						  totalFrames = 0;
+						  current_pitch = 0;
+						  current_roll = 0;
+						  current_yaw = 0;
+						  current_thrust = 0;
+						  freeFrameNodes(DLL_HEAD->next);
+						  DLL_HEAD->next = NULL;
+						  current_node = DLL_HEAD;
+						  
+						  if (current_state == HOVER_STATE || current_state == PREHOVER_STATE){
+							  //stay in hover mode
+							  flightModeHover = 1;
+							  cflieCopter->m_nThrust = HOVERTHRUST;
+							  current_state = HOVER_STATE;
+						  }else {
+							  //exit hover mode
+							  flightModeHover = 0;
+							  setThrust(cflieCopter, DEFAULTTHRUST + current_thrust*THRUST_MULTIPLIER*(BATTERYCONSTANT - batteryLevel(cflieCopter)));	
+							  current_state = NORMAL_STATE;
+						  }
+						  cycle(cflieCopter);
+					  }
+						  
+						  //unlock
+						  //pthread_mutex_unlock(&lockz);
+					  
+					  
+				  
+				  
+				  
+					  
+				  }else{ 
+					  fly(cflieCopter);
+				  }// DONE WITH if FLY_PATTERN ==2, else
+			  }
+              break;
+          case LAND_SIG:
+              if (current_state != LAND_STATE) {
+                land(cflieCopter);
+              }
+              else {
+                setThrust(cflieCopter, 0);
+              }
+              current_state = LAND_STATE;
+              current_signal = NO_SIG;
+              break;
+          case CHANGE_HOVER_SIG:
+              if (current_state == NORMAL_STATE){
+                printf("CHANGE_HOVER_SIG in NORMAL STATE.\n");
+                current_state = PREHOVER_STATE;
+                flightModeHover = 1;
+                countTimeOut(cflieCopter);
+              }
+              else if (current_state == HOVER_STATE){
+                printf("CHANGE_HOVER_SIG in HOVER STATE.\n");
+                current_state = PRENORMAL_STATE;
+                countTimeOut(cflieCopter);
+              }
+              break;
+          case TIME_OUT_SIG:
+              if (current_state == PREHOVER_STATE){
+                printf("TIME_OUT_SIG in PREHOVER STATE.\n");
+                current_state = HOVER_STATE;
+              }
+              else if (current_state == PRENORMAL_STATE){
+                printf("TIME_OUT_SIG in PRENORMAL STATE.\n");
+                current_state = NORMAL_STATE;
+                flightModeHover = 0;
+              }
+              current_signal = NO_SIG;
+              break;
+          case FLY_SIG:
+              if (current_state == LAND_STATE){
+                liftOff(cflieCopter);
+                current_state = NORMAL_STATE;
+              }
+              current_signal = NO_SIG;
+              break;
+        }
+
+        //unlock
+        pthread_mutex_unlock(&lockz);
+        
+  }
+  printf("%s\n", "exit");
+  return 0;
+}
+
+//This this the main function, use to set up the radio and init the copter
+int main(int argc, char **argv) {
+  CCrazyRadio *crRadio = new CCrazyRadio;
+  //CS50_TODO
+  //The second number is channel ID
+  //The default channel ID is 10
+  //Each group will have a unique ID in the demo day 
+  CCrazyRadioConstructor(crRadio,"radio://0/26/250K");
+  
+  if(startRadio(crRadio)) {
+    cflieCopter=new CCrazyflie;
+    CCrazyflieConstructor(crRadio,cflieCopter);
+    
+    // Enable sending the setpoints. This can be used to temporarily
+    // stop updating the internal controller setpoints and instead
+    // sending dummy packets (to keep the connection alive).
+    setSendSetpoints(cflieCopter,true);
+
+    //CS50_TODO
+
+    //Initialize copter's thrust/roll/pitch
+    cflieCopter->m_nThrust = DEFAULTTHRUST;
+    cflieCopter->m_fRoll = DEFAULTROLL;
+    cflieCopter->m_fPitch = DEFAULTPITCH;
+
+    //Threads
+    pthread_t leapThread, copterThread;
+    int leapReturn = pthread_create(&leapThread, NULL, &leap_thread, NULL);
+    int copterReturn = pthread_create(&copterThread, NULL, &main_control, cflieCopter);
+
+
+  } else {
+    printf("%s\n", "Could not connect to dongle. Did you plug it in?");
+  }
+  while(1);
+  printf("Should never reach here.\n");
+  return 0;
+}
